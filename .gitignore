@@ -1,0 +1,8 @@
+.DS_Store
+ToDO.md
+
+# Local firmware build output
+.pio/
+
+# Local credentials
+firmware/**/include/secrets.h
