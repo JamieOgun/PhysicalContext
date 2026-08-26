@@ -1,0 +1,25 @@
+from pathlib import Path
+
+from physical_context.config import Settings
+
+
+def test_default_paths_expand_under_home() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.resolved_data_root == Path.home() / ".pcl"
+    assert settings.captures_dir == Path.home() / ".pcl" / "captures"
+    assert settings.database_path == Path.home() / ".pcl" / "physical_context.db"
+
+
+def test_environment_config(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PCL_PORT", "9000")
+    monkeypatch.setenv("PCL_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("PCL_LOCAL_CAPTION", "true")
+    monkeypatch.setenv("PCL_LOCAL_EMBED", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.port == 9000
+    assert settings.resolved_data_root == tmp_path
+    assert settings.local_caption is True
+    assert settings.local_embed is True

@@ -1,5 +1,11 @@
 .DS_Store
 ToDO.md
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
 
 # Local firmware build output
 .pio/
