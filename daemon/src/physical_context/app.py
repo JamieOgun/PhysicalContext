@@ -12,8 +12,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        initialize_storage(active_settings)
         app.state.settings = active_settings
+        app.state.database = initialize_storage(active_settings)
         yield
 
     application = FastAPI(title="Physical Context Layer", lifespan=lifespan)

@@ -1,10 +1,14 @@
 #include <M5Unified.h>
 #include <esp_camera.h>
+#include <img_converters.h>
 #include <WiFi.h>
 #include "secrets.h"
 
 constexpr int PIN_WHITE = 1;   // CoreS3-Lite Port A white
 constexpr int PIN_YELLOW = 2;  // CoreS3-Lite Port A yellow
+constexpr unsigned long DEBOUNCE_MS = 800;
+constexpr unsigned long CONFIRMATION_MS = 3000;
+constexpr uint8_t JPEG_QUALITY = 80;
 
 class GC0308 {
 public:
@@ -89,24 +93,44 @@ void drawStatus(const char* message, int count) {
   M5.Display.println(count);
 }
 
-void drawCaptureOverlay(int count) {
+void drawCaptureOverlay(const char* message, int count) {
+  M5.Display.fillRect(0, 0, M5.Display.width(), 54, TFT_BLACK);
   M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(0, 0);
+  M5.Display.println(message);
   M5.Display.print("count: ");
   M5.Display.println(count);
 }
 
-void captureAndDisplay(int count) {
+bool captureAndDisplay(int count) {
+  drawStatus("CAPTURING", count);
+
   if (!Camera.get()) {
     drawStatus("capture failed", count);
-    return;
+    return false;
   }
 
-  M5.Display.pushImage(0, 0, M5.Display.width(), M5.Display.height(),
+  M5.Display.pushImage(0, 0, Camera.fb->width, Camera.fb->height,
                        reinterpret_cast<uint16_t*>(Camera.fb->buf));
+
+  uint8_t* jpegBuffer = nullptr;
+  size_t jpegLength = 0;
+  bool converted = frame2jpg(Camera.fb, JPEG_QUALITY, &jpegBuffer, &jpegLength);
+
   Camera.free();
-  drawCaptureOverlay(count);
+
+  if (!converted || jpegBuffer == nullptr) {
+    free(jpegBuffer);
+    drawStatus("JPEG failed", count);
+    return false;
+  }
+
+  Serial.printf("JPEG captured: %u bytes\n", static_cast<unsigned>(jpegLength));
+  free(jpegBuffer);
+
+  drawCaptureOverlay("OK LOCAL", count);
+  return true;
 }
 
 void setup() {
@@ -161,14 +185,34 @@ void loop() {
 
   static int count = 0;
   static bool lastTriggered = false;
+  static bool hasCaptured = false;
+  static bool confirmationVisible = false;
+  static unsigned long lastCaptureAt = 0;
+  static unsigned long confirmationStartedAt = 0;
 
   bool whiteLow = digitalRead(PIN_WHITE) == LOW;
   bool yellowLow = digitalRead(PIN_YELLOW) == LOW;
   bool triggered = whiteLow || yellowLow;
+  unsigned long now = millis();
 
-  if (triggered && !lastTriggered) {
-    count++;
-    captureAndDisplay(count);
+  bool newPress = triggered && !lastTriggered;
+  bool debounceElapsed = !hasCaptured || now - lastCaptureAt >= DEBOUNCE_MS;
+
+  if (newPress && debounceElapsed) {
+    lastCaptureAt = now;
+    hasCaptured = true;
+
+    int nextCount = count + 1;
+    if (captureAndDisplay(nextCount)) {
+      count = nextCount;
+      confirmationStartedAt = millis();
+      confirmationVisible = true;
+    }
+  }
+
+  if (confirmationVisible && millis() - confirmationStartedAt >= CONFIRMATION_MS) {
+    drawStatus("IDLE", count);
+    confirmationVisible = false;
   }
 
   lastTriggered = triggered;

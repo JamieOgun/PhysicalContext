@@ -1,11 +1,10 @@
-import sqlite3
-
 from physical_context.config import Settings
+from physical_context.database import Database
 
 
-def initialize_storage(settings: Settings) -> None:
+def initialize_storage(settings: Settings) -> Database:
     settings.captures_dir.mkdir(parents=True, exist_ok=True)
 
-    # Opening SQLite creates the database file without introducing the T-002 schema yet.
-    with sqlite3.connect(settings.database_path):
-        pass
+    database = Database(settings.database_path)
+    database.migrate()
+    return database
