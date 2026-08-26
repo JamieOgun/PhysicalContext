@@ -12,3 +12,4 @@ __pycache__/
 
 # Local credentials
 firmware/**/include/secrets.h
+firmware/**/include/local_config.h

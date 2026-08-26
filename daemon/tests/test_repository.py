@@ -5,8 +5,12 @@ from pathlib import Path
 import pytest
 
 from physical_context.database import Database
-from physical_context.models import Capture
-from physical_context.repository import CaptureNotFoundError, CaptureRepository
+from physical_context.models import Capture, CaptureState
+from physical_context.repository import (
+    CaptureNotFoundError,
+    CaptureRepository,
+    InvalidCaptureStateError,
+)
 
 
 def make_repository(tmp_path: Path) -> tuple[Database, CaptureRepository]:
@@ -26,7 +30,7 @@ def make_capture() -> Capture:
         git_repo="PhysicalContext",
         git_branch="main",
         git_sha="abc123",
-        state="pending",
+        state=CaptureState.PENDING,
     )
 
 
@@ -46,14 +50,49 @@ def test_insert_and_dedupe_lookup(tmp_path: Path) -> None:
 
 def test_update_state(tmp_path: Path) -> None:
     _, repository = make_repository(tmp_path)
-    capture = make_capture()
+    capture = replace(make_capture(), state=CaptureState.UPLOADED)
     repository.insert(capture)
 
-    repository.update_state(capture.id, "captioning")
+    repository.transition_state(capture.id, CaptureState.PENDING)
+    repository.transition_state(capture.id, CaptureState.CAPTIONING)
+    repository.transition_state(capture.id, CaptureState.READY)
 
-    assert repository.get(capture.id).state == "captioning"
+    assert repository.get(capture.id).state == CaptureState.READY
+    with pytest.raises(InvalidCaptureStateError):
+        repository.transition_state(capture.id, CaptureState.PENDING)
     with pytest.raises(CaptureNotFoundError):
-        repository.update_state("missing", "ready")
+        repository.transition_state("missing", CaptureState.READY)
+
+
+def test_record_quality_and_requeue_captioning(tmp_path: Path) -> None:
+    _, repository = make_repository(tmp_path)
+    uploaded = replace(make_capture(), state=CaptureState.UPLOADED)
+    captioning = replace(
+        make_capture(),
+        id="cap_captioning",
+        client_capture_id="device-uuid-2",
+        state=CaptureState.CAPTIONING,
+    )
+    repository.insert(uploaded)
+    repository.insert(captioning)
+
+    repository.record_quality(
+        uploaded.id,
+        sharpness=42.5,
+        brightness=87.0,
+        is_blurry=None,
+        is_dark=None,
+    )
+    requeued = repository.requeue_captioning()
+
+    measured = repository.get(uploaded.id)
+    assert measured.sharpness == 42.5
+    assert measured.brightness == 87.0
+    assert measured.is_blurry is None
+    assert measured.is_dark is None
+    assert measured.state == CaptureState.PENDING
+    assert requeued == 1
+    assert repository.get(captioning.id).state == CaptureState.PENDING
 
 
 def test_write_search_indexes(tmp_path: Path) -> None:

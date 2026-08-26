@@ -16,4 +16,4 @@ def test_initialize_storage_creates_capture_dir_and_database(tmp_path: Path) -> 
 
     with database.connect() as connection:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2

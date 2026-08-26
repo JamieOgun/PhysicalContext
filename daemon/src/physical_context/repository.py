@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import sqlite_vec
 
 from physical_context.database import Database
-from physical_context.models import Capture
+from physical_context.models import Capture, CaptureState
 
 EMBEDDING_DIMENSIONS = 512
 
@@ -22,11 +22,25 @@ CAPTURE_COLUMNS = """
     git_branch,
     git_sha,
     sharpness,
+    brightness,
+    is_blurry,
+    is_dark,
     state
 """
 
+ALLOWED_STATE_TRANSITIONS = {
+    CaptureState.UPLOADED: {CaptureState.PENDING},
+    CaptureState.PENDING: {CaptureState.CAPTIONING},
+    CaptureState.CAPTIONING: {CaptureState.PENDING, CaptureState.READY},
+    CaptureState.READY: set(),
+}
+
 
 class CaptureNotFoundError(LookupError):
+    pass
+
+
+class InvalidCaptureStateError(RuntimeError):
     pass
 
 
@@ -39,7 +53,7 @@ class CaptureRepository:
             connection.execute(
                 f"""
                 INSERT INTO captures ({CAPTURE_COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     capture.id,
@@ -54,6 +68,9 @@ class CaptureRepository:
                     capture.git_branch,
                     capture.git_sha,
                     capture.sharpness,
+                    capture.brightness,
+                    capture.is_blurry,
+                    capture.is_dark,
                     capture.state,
                 ),
             )
@@ -65,14 +82,71 @@ class CaptureRepository:
     def get_by_client_capture_id(self, client_capture_id: str) -> Capture | None:
         return self._get_by("client_capture_id", client_capture_id)
 
-    def update_state(self, capture_id: str, state: str) -> None:
+    def transition_state(self, capture_id: str, state: CaptureState) -> None:
         with self.database.connect() as connection:
-            result = connection.execute(
+            row = connection.execute(
+                "SELECT state FROM captures WHERE id = ?", (capture_id,)
+            ).fetchone()
+            if row is None:
+                raise CaptureNotFoundError(capture_id)
+
+            current_state = CaptureState(row["state"])
+            if state not in ALLOWED_STATE_TRANSITIONS[current_state]:
+                raise InvalidCaptureStateError(f"Cannot transition {current_state} to {state}")
+
+            connection.execute(
                 "UPDATE captures SET state = ? WHERE id = ?",
                 (state, capture_id),
             )
+
+    def record_quality(
+        self,
+        capture_id: str,
+        *,
+        sharpness: float,
+        brightness: float,
+        is_blurry: bool | None,
+        is_dark: bool | None,
+    ) -> None:
+        with self.database.connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE captures
+                SET sharpness = ?, brightness = ?, is_blurry = ?, is_dark = ?, state = ?
+                WHERE id = ? AND state = ?
+                """,
+                (
+                    sharpness,
+                    brightness,
+                    is_blurry,
+                    is_dark,
+                    CaptureState.PENDING,
+                    capture_id,
+                    CaptureState.UPLOADED,
+                ),
+            )
             if result.rowcount == 0:
-                raise CaptureNotFoundError(capture_id)
+                row = connection.execute(
+                    "SELECT state FROM captures WHERE id = ?", (capture_id,)
+                ).fetchone()
+                if row is None:
+                    raise CaptureNotFoundError(capture_id)
+                raise InvalidCaptureStateError(
+                    f"Quality cannot be recorded while capture is {row['state']}"
+                )
+
+    def requeue_captioning(self) -> int:
+        with self.database.connect() as connection:
+            result = connection.execute(
+                "UPDATE captures SET state = ? WHERE state = ?",
+                (CaptureState.PENDING, CaptureState.CAPTIONING),
+            )
+            return result.rowcount
+
+    def delete(self, capture_id: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute("DELETE FROM captures_vec WHERE capture_id = ?", (capture_id,))
+            connection.execute("DELETE FROM captures WHERE id = ?", (capture_id,))
 
     def write_search_indexes(
         self,
@@ -132,5 +206,12 @@ def _capture_from_row(row: sqlite3.Row) -> Capture:
         git_branch=row["git_branch"],
         git_sha=row["git_sha"],
         sharpness=row["sharpness"],
-        state=row["state"],
+        brightness=row["brightness"],
+        is_blurry=_optional_bool(row["is_blurry"]),
+        is_dark=_optional_bool(row["is_dark"]),
+        state=CaptureState(row["state"]),
     )
+
+
+def _optional_bool(value: int | None) -> bool | None:
+    return bool(value) if value is not None else None

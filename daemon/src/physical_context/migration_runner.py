@@ -1,7 +1,7 @@
 import sqlite3
 from importlib import resources
 
-MIGRATIONS = ("001_initial.sql",)
+MIGRATIONS = ("001_initial.sql", "002_quality.sql")
 
 
 def apply_migrations(connection: sqlite3.Connection) -> None:

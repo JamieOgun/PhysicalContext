@@ -1,4 +1,12 @@
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class CaptureState(StrEnum):
+    UPLOADED = "uploaded"
+    PENDING = "pending"
+    CAPTIONING = "captioning"
+    READY = "ready"
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,4 +23,7 @@ class Capture:
     git_branch: str | None = None
     git_sha: str | None = None
     sharpness: float | None = None
-    state: str = "pending"
+    brightness: float | None = None
+    is_blurry: bool | None = None
+    is_dark: bool | None = None
+    state: CaptureState = CaptureState.PENDING

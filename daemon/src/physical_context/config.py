@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     data_root: Path = Path("~/.pcl")
     local_caption: bool = False
     local_embed: bool = False
+    sharpness_threshold: float | None = Field(default=None, ge=0)
+    brightness_threshold: float | None = Field(default=None, ge=0, le=255)
 
     @property
     def resolved_data_root(self) -> Path:
