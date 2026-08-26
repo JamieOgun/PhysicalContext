@@ -12,7 +12,9 @@ class Settings(BaseSettings):
     )
 
     anthropic_api_key: SecretStr | None = None
+    anthropic_model: str | None = None
     voyage_api_key: SecretStr | None = None
+    voyage_model: str | None = None
     host: str = "0.0.0.0"
     port: int = Field(default=8787, ge=1, le=65535)
     data_root: Path = Path("~/.pcl")

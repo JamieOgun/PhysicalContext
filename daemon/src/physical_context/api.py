@@ -2,8 +2,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from physical_context.capture_service import CaptureService, InvalidCaptureError
+from physical_context.capture_processor import CaptureTaskRunner
+from physical_context.models import CaptureState
 
 router = APIRouter()
 
@@ -19,7 +22,7 @@ class CaptureResponse(BaseModel):
 
 
 @router.post("/capture", response_model=CaptureResponse, status_code=status.HTTP_201_CREATED)
-def create_capture(
+async def create_capture(
     request: Request,
     response: Response,
     image: Annotated[UploadFile, File()],
@@ -35,7 +38,8 @@ def create_capture(
 
     service: CaptureService = request.app.state.capture_service
     try:
-        result = service.ingest(
+        result = await run_in_threadpool(
+            service.ingest,
             image.file,
             device_ts=device_ts,
             device_id=device_id,
@@ -49,6 +53,10 @@ def create_capture(
 
     if result.deduplicated:
         response.status_code = status.HTTP_200_OK
+
+    if result.capture.state == CaptureState.PENDING:
+        capture_tasks: CaptureTaskRunner = request.app.state.capture_tasks
+        capture_tasks.schedule(result.capture.id)
 
     return CaptureResponse(
         capture_id=result.capture.id,

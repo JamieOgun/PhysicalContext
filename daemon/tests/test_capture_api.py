@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import cv2
@@ -6,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from physical_context.app import create_app
+from physical_context.captions import CaptionProvider, StructuredCaption
 from physical_context.config import Settings
 from physical_context.models import Capture, CaptureState
 from physical_context.repository import CaptureRepository
@@ -27,6 +29,7 @@ def make_client(
     *,
     sharpness_threshold: float | None = None,
     brightness_threshold: float | None = None,
+    caption_provider: CaptionProvider | None = None,
 ) -> TestClient:
     settings = Settings(
         data_root=tmp_path,
@@ -34,7 +37,7 @@ def make_client(
         brightness_threshold=brightness_threshold,
         _env_file=None,
     )
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings, caption_provider=caption_provider))
 
 
 def post_capture(
@@ -55,7 +58,32 @@ def post_capture(
     )
 
 
-def test_capture_stores_image_and_pending_row(tmp_path: Path) -> None:
+def wait_for_state(
+    repository: CaptureRepository,
+    capture_id: str,
+    expected: CaptureState,
+) -> Capture:
+    for _ in range(100):
+        capture = repository.get(capture_id)
+        if capture is not None and capture.state == expected:
+            return capture
+        time.sleep(0.01)
+    raise AssertionError(f"Capture {capture_id} did not reach {expected}")
+
+
+class StaticCaptionProvider:
+    def caption(self, image_path: Path, previous_caption: str | None) -> StructuredCaption:
+        return StructuredCaption(
+            summary="A uniformly lit test image.",
+            details=["The frame is a single solid color."],
+            visible_text=[],
+            spatial_relationships=[],
+            changes=[],
+            uncertainties=[],
+        )
+
+
+def test_capture_stores_image_and_reaches_ready(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         response = post_capture(client)
 
@@ -66,17 +94,32 @@ def test_capture_stores_image_and_pending_row(tmp_path: Path) -> None:
         assert body["deduplicated"] is False
 
         repository = CaptureRepository(client.app.state.database)
-        capture = repository.get(body["capture_id"])
-        assert capture is not None
+        capture = wait_for_state(repository, body["capture_id"], CaptureState.READY)
         assert capture.client_capture_id == "client-capture-1"
         assert capture.device_ts == 1_777_000_000
-        assert capture.state == CaptureState.PENDING
+        assert capture.caption is None
         assert capture.created_at.endswith("Z")
         assert capture.sharpness is not None
         assert capture.brightness == pytest.approx(128, abs=1)
         assert capture.is_blurry is None
         assert capture.is_dark is None
         assert Path(capture.image_path).read_bytes() == JPEG_BYTES
+
+
+def test_capture_runs_configured_caption_provider_automatically(tmp_path: Path) -> None:
+    with make_client(tmp_path, caption_provider=StaticCaptionProvider()) as client:
+        response = post_capture(client)
+        repository = CaptureRepository(client.app.state.database)
+        capture = wait_for_state(
+            repository,
+            response.json()["capture_id"],
+            CaptureState.READY,
+        )
+
+    assert response.status_code == 201
+    assert capture.caption == (
+        "A uniformly lit test image.\nDetails: The frame is a single solid color."
+    )
 
 
 def test_reupload_is_idempotent(tmp_path: Path) -> None:
@@ -126,7 +169,7 @@ def test_capture_applies_configured_quality_thresholds(tmp_path: Path) -> None:
     assert response.json()["is_dark"] is True
 
 
-def test_startup_requeues_captioning_capture(tmp_path: Path) -> None:
+def test_startup_requeues_and_finishes_captioning_capture(tmp_path: Path) -> None:
     settings = Settings(data_root=tmp_path, _env_file=None)
     repository = CaptureRepository(initialize_storage(settings))
     capture = Capture(
@@ -142,4 +185,6 @@ def test_startup_requeues_captioning_capture(tmp_path: Path) -> None:
     with TestClient(create_app(settings)):
         pass
 
-    assert repository.get(capture.id).state == CaptureState.PENDING
+    recovered = repository.get(capture.id)
+    assert recovered.state == CaptureState.READY
+    assert recovered.caption is None

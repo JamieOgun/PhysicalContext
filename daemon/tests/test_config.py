@@ -15,6 +15,7 @@ def test_default_paths_expand_under_home() -> None:
 def test_environment_config(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PCL_PORT", "9000")
     monkeypatch.setenv("PCL_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("PCL_ANTHROPIC_MODEL", "configured-model")
     monkeypatch.setenv("PCL_LOCAL_CAPTION", "true")
     monkeypatch.setenv("PCL_LOCAL_EMBED", "true")
     monkeypatch.setenv("PCL_SHARPNESS_THRESHOLD", "125.5")
@@ -24,6 +25,7 @@ def test_environment_config(monkeypatch, tmp_path: Path) -> None:
 
     assert settings.port == 9000
     assert settings.resolved_data_root == tmp_path
+    assert settings.anthropic_model == "configured-model"
     assert settings.local_caption is True
     assert settings.local_embed is True
     assert settings.sharpness_threshold == 125.5

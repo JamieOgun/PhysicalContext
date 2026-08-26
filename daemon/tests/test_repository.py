@@ -95,6 +95,30 @@ def test_record_quality_and_requeue_captioning(tmp_path: Path) -> None:
     assert repository.get(captioning.id).state == CaptureState.PENDING
 
 
+def test_lists_pending_ids_and_finds_previous_caption(tmp_path: Path) -> None:
+    _, repository = make_repository(tmp_path)
+    previous = replace(
+        make_capture(),
+        id="cap_previous",
+        client_capture_id="device-uuid-previous",
+        created_at="2026-08-26T11:00:00Z",
+        caption="A soldering iron rests beside a circuit board.",
+        state=CaptureState.READY,
+    )
+    current = replace(
+        make_capture(),
+        id="cap_current",
+        client_capture_id="device-uuid-current",
+        created_at="2026-08-26T12:00:00Z",
+    )
+    repository.insert(previous)
+    repository.insert(current)
+
+    assert repository.list_ids_by_state(CaptureState.PENDING) == (current.id,)
+    assert repository.get_previous_caption(current.id) == previous.caption
+    assert repository.get_previous_caption(previous.id) is None
+
+
 def test_write_search_indexes(tmp_path: Path) -> None:
     database, repository = make_repository(tmp_path)
     capture = make_capture()

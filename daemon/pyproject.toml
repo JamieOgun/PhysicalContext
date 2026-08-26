@@ -8,12 +8,14 @@ version = "0.1.0"
 description = "Local capture and retrieval daemon for Physical Context Layer"
 requires-python = ">=3.11"
 dependencies = [
+  "anthropic>=0.77,<1",
   "fastapi>=0.116,<1",
   "opencv-python-headless>=4.13,<5",
   "pydantic-settings>=2.10,<3",
   "python-multipart>=0.0.20,<1",
   "sqlite-vec>=0.1.6,<0.2",
   "uvicorn>=0.35,<1",
+  "voyageai>=0.3.7,<1",
 ]
 
 [project.scripts]

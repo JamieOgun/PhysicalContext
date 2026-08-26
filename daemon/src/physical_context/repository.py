@@ -5,9 +5,8 @@ from collections.abc import Sequence
 import sqlite_vec
 
 from physical_context.database import Database
+from physical_context.embeddings import validate_embedding
 from physical_context.models import Capture, CaptureState
-
-EMBEDDING_DIMENSIONS = 512
 
 CAPTURE_COLUMNS = """
     id,
@@ -143,6 +142,55 @@ class CaptureRepository:
             )
             return result.rowcount
 
+    def list_ids_by_state(self, state: CaptureState) -> tuple[str, ...]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT id FROM captures WHERE state = ? ORDER BY created_at, rowid",
+                (state,),
+            ).fetchall()
+        return tuple(row["id"] for row in rows)
+
+    def get_previous_caption(self, capture_id: str) -> str | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT previous.caption
+                FROM captures AS current
+                JOIN captures AS previous
+                  ON previous.created_at < current.created_at
+                 AND previous.caption IS NOT NULL
+                WHERE current.id = ?
+                ORDER BY previous.created_at DESC, previous.rowid DESC
+                LIMIT 1
+                """,
+                (capture_id,),
+            ).fetchone()
+        return row["caption"] if row is not None else None
+
+    def list_ids_missing_embeddings(self) -> tuple[str, ...]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT captures.id
+                FROM captures
+                LEFT JOIN captures_vec ON captures_vec.capture_id = captures.id
+                WHERE captures.state = ?
+                  AND captures.caption IS NOT NULL
+                  AND captures_vec.capture_id IS NULL
+                ORDER BY captures.created_at, captures.rowid
+                """,
+                (CaptureState.READY,),
+            ).fetchall()
+        return tuple(row["id"] for row in rows)
+
+    def has_embedding(self, capture_id: str) -> bool:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM captures_vec WHERE capture_id = ?",
+                (capture_id,),
+            ).fetchone()
+        return row is not None
+
     def delete(self, capture_id: str) -> None:
         with self.database.connect() as connection:
             connection.execute("DELETE FROM captures_vec WHERE capture_id = ?", (capture_id,))
@@ -158,8 +206,7 @@ class CaptureRepository:
     ) -> None:
         if embedding is not None and caption is None:
             raise ValueError("An embedding requires a caption")
-        if embedding is not None and len(embedding) != EMBEDDING_DIMENSIONS:
-            raise ValueError(f"Embedding must contain {EMBEDDING_DIMENSIONS} values")
+        validated_embedding = validate_embedding(embedding) if embedding is not None else None
 
         with self.database.connect() as connection:
             result = connection.execute(
@@ -169,15 +216,20 @@ class CaptureRepository:
             if result.rowcount == 0:
                 raise CaptureNotFoundError(capture_id)
 
-            connection.execute(
-                "DELETE FROM captures_vec WHERE capture_id = ?",
+            _replace_embedding(connection, capture_id, validated_embedding)
+
+    def write_embedding(self, capture_id: str, embedding: Sequence[float]) -> None:
+        validated_embedding = validate_embedding(embedding)
+        with self.database.connect() as connection:
+            capture = connection.execute(
+                "SELECT caption FROM captures WHERE id = ?",
                 (capture_id,),
-            )
-            if embedding is not None:
-                connection.execute(
-                    "INSERT INTO captures_vec(capture_id, embedding) VALUES (?, ?)",
-                    (capture_id, sqlite_vec.serialize_float32(list(embedding))),
-                )
+            ).fetchone()
+            if capture is None:
+                raise CaptureNotFoundError(capture_id)
+            if capture["caption"] is None:
+                raise ValueError("An embedding requires a caption")
+            _replace_embedding(connection, capture_id, validated_embedding)
 
     def _get_by(self, column: str, value: str) -> Capture | None:
         with self.database.connect() as connection:
@@ -190,6 +242,19 @@ class CaptureRepository:
 
 def _serialize_tags(tags: Sequence[str]) -> str:
     return json.dumps(list(tags), separators=(",", ":"))
+
+
+def _replace_embedding(
+    connection: sqlite3.Connection,
+    capture_id: str,
+    embedding: Sequence[float] | None,
+) -> None:
+    connection.execute("DELETE FROM captures_vec WHERE capture_id = ?", (capture_id,))
+    if embedding is not None:
+        connection.execute(
+            "INSERT INTO captures_vec(capture_id, embedding) VALUES (?, ?)",
+            (capture_id, sqlite_vec.serialize_float32(list(embedding))),
+        )
 
 
 def _capture_from_row(row: sqlite3.Row) -> Capture:
