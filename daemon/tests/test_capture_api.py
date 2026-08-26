@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from physical_context.app import create_app
 from physical_context.captions import CaptionProvider, StructuredCaption
 from physical_context.config import Settings
+from physical_context.embeddings import EMBEDDING_DIMENSIONS, EmbeddingInputType, EmbeddingProvider
 from physical_context.models import Capture, CaptureState
 from physical_context.repository import CaptureRepository
 from physical_context.runtime import initialize_storage
@@ -30,6 +31,7 @@ def make_client(
     sharpness_threshold: float | None = None,
     brightness_threshold: float | None = None,
     caption_provider: CaptionProvider | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> TestClient:
     settings = Settings(
         data_root=tmp_path,
@@ -37,7 +39,13 @@ def make_client(
         brightness_threshold=brightness_threshold,
         _env_file=None,
     )
-    return TestClient(create_app(settings, caption_provider=caption_provider))
+    return TestClient(
+        create_app(
+            settings,
+            caption_provider=caption_provider,
+            embedding_provider=embedding_provider,
+        )
+    )
 
 
 def post_capture(
@@ -81,6 +89,15 @@ class StaticCaptionProvider:
             changes=[],
             uncertainties=[],
         )
+
+
+class StaticEmbeddingProvider:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str]] = []
+
+    def embed(self, text: str, *, input_type: EmbeddingInputType) -> tuple[float, ...]:
+        self.requests.append((text, input_type))
+        return tuple(0.5 for _ in range(EMBEDDING_DIMENSIONS))
 
 
 def test_capture_stores_image_and_reaches_ready(tmp_path: Path) -> None:
@@ -188,3 +205,55 @@ def test_startup_requeues_and_finishes_captioning_capture(tmp_path: Path) -> Non
     recovered = repository.get(capture.id)
     assert recovered.state == CaptureState.READY
     assert recovered.caption is None
+
+
+def test_capture_embeds_the_caption_it_just_generated(tmp_path: Path) -> None:
+    embedding_provider = StaticEmbeddingProvider()
+    with make_client(
+        tmp_path,
+        caption_provider=StaticCaptionProvider(),
+        embedding_provider=embedding_provider,
+    ) as client:
+        response = post_capture(client)
+        repository = CaptureRepository(client.app.state.database)
+        capture = wait_for_state(
+            repository,
+            response.json()["capture_id"],
+            CaptureState.READY,
+        )
+
+    assert embedding_provider.requests == [(capture.caption, "document")]
+    assert repository.has_embedding(capture.id) is True
+    assert repository.list_ids_missing_embeddings() == ()
+
+
+def test_startup_backfills_captions_left_without_an_embedding(tmp_path: Path) -> None:
+    settings = Settings(data_root=tmp_path, _env_file=None)
+    repository = CaptureRepository(initialize_storage(settings))
+    capture = Capture(
+        id="unembedded-capture",
+        client_capture_id="unembedded-client-id",
+        created_at="2026-08-26T12:00:00Z",
+        device_ts=1_777_000_000,
+        image_path=str(tmp_path / "captures" / "unembedded-capture.jpg"),
+        caption="A soldering iron rests beside a circuit board.",
+        state=CaptureState.READY,
+    )
+    repository.insert(capture)
+    assert repository.list_ids_missing_embeddings() == (capture.id,)
+
+    caption_provider = StaticCaptionProvider()
+    embedding_provider = StaticEmbeddingProvider()
+    with TestClient(
+        create_app(
+            settings,
+            caption_provider=caption_provider,
+            embedding_provider=embedding_provider,
+        )
+    ):
+        pass
+
+    assert embedding_provider.requests == [(capture.caption, "document")]
+    assert repository.has_embedding(capture.id) is True
+    assert repository.get(capture.id).caption == capture.caption
+    assert repository.list_ids_missing_embeddings() == ()

@@ -4,8 +4,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, Response, Upl
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from physical_context.capture_service import CaptureService, InvalidCaptureError
 from physical_context.capture_processor import CaptureTaskRunner
+from physical_context.capture_service import CaptureService, InvalidCaptureError
 from physical_context.models import CaptureState
 
 router = APIRouter()

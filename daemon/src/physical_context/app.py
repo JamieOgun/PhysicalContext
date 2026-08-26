@@ -31,9 +31,7 @@ def create_app(
         repository = CaptureRepository(app.state.database)
         repository.requeue_captioning()
         active_caption_provider = caption_provider or _build_caption_provider(active_settings)
-        active_embedding_provider = embedding_provider or _build_embedding_provider(
-            active_settings
-        )
+        active_embedding_provider = embedding_provider or _build_embedding_provider(active_settings)
         app.state.capture_tasks = CaptureTaskRunner(
             CaptureProcessor(repository, active_caption_provider, active_embedding_provider)
         )

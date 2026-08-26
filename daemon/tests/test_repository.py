@@ -180,3 +180,67 @@ def test_search_index_write_requires_matching_capture_and_embedding(tmp_path: Pa
             tags=(),
             embedding=[0.0],
         )
+
+
+def make_ready_capture(suffix: str, caption: str | None) -> Capture:
+    return replace(
+        make_capture(),
+        id=f"cap_{suffix}",
+        client_capture_id=f"device-uuid-{suffix}",
+        image_path=f"/tmp/cap_{suffix}.jpg",
+        caption=caption,
+        state=CaptureState.READY,
+    )
+
+
+def test_backfill_discovery_lists_only_ready_captions_without_vectors(tmp_path: Path) -> None:
+    _, repository = make_repository(tmp_path)
+    missing = make_ready_capture("missing", "A soldering iron rests on the bench.")
+    embedded = make_ready_capture("embedded", "A circuit board sits under a lamp.")
+    uncaptioned = make_ready_capture("uncaptioned", None)
+    still_pending = replace(
+        make_capture(),
+        id="cap_pending",
+        client_capture_id="device-uuid-pending",
+        caption="A caption written before the row reached ready.",
+    )
+    for capture in (missing, embedded, uncaptioned, still_pending):
+        repository.insert(capture)
+    repository.write_embedding(embedded.id, [0.25] * 512)
+
+    assert repository.list_ids_missing_embeddings() == (missing.id,)
+    assert repository.has_embedding(missing.id) is False
+    assert repository.has_embedding(embedded.id) is True
+
+
+def test_write_embedding_replaces_a_previous_vector(tmp_path: Path) -> None:
+    database, repository = make_repository(tmp_path)
+    capture = make_ready_capture("rewrite", "A mug sits beside an open notebook.")
+    repository.insert(capture)
+
+    repository.write_embedding(capture.id, [0.25] * 512)
+    repository.write_embedding(capture.id, [0.75] * 512)
+
+    with database.connect() as connection:
+        rows = connection.execute(
+            "SELECT capture_id FROM captures_vec WHERE capture_id = ?",
+            (capture.id,),
+        ).fetchall()
+
+    assert len(rows) == 1
+    assert repository.list_ids_missing_embeddings() == ()
+
+
+def test_write_embedding_requires_an_existing_captioned_capture(tmp_path: Path) -> None:
+    _, repository = make_repository(tmp_path)
+    uncaptioned = make_ready_capture("blank", None)
+    repository.insert(uncaptioned)
+
+    with pytest.raises(CaptureNotFoundError):
+        repository.write_embedding("missing", [0.0] * 512)
+
+    with pytest.raises(ValueError, match="requires a caption"):
+        repository.write_embedding(uncaptioned.id, [0.0] * 512)
+
+    with pytest.raises(ValueError, match="512"):
+        repository.write_embedding(uncaptioned.id, [0.0])
