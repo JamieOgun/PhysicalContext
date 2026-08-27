@@ -4,14 +4,13 @@ import sqlite3
 import tempfile
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
 from physical_context.ambient_context import AmbientContextResolver
 from physical_context.image_quality import ImageDecodeError, ImageQualityAnalyzer
 from physical_context.models import Capture, CaptureState
-from physical_context.repository import CaptureRepository
+from physical_context.repository import CaptureRepository, utc_timestamp
 
 
 class InvalidCaptureError(ValueError):
@@ -52,7 +51,10 @@ class CaptureService:
 
         existing = self.repository.get_by_client_capture_id(client_capture_id)
         if existing is not None:
-            return IngestResult(capture=existing, deduplicated=True)
+            if _can_replace_stale_capture(existing):
+                self.repository.delete(existing.id)
+            else:
+                return IngestResult(capture=existing, deduplicated=True)
 
         capture_id = uuid.uuid4().hex
         image_path = self.captures_dir / f"{capture_id}.jpg"
@@ -62,8 +64,9 @@ class CaptureService:
         capture = Capture(
             id=capture_id,
             client_capture_id=client_capture_id,
-            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            created_at=utc_timestamp(),
             device_ts=device_ts,
+            device_id=device_id,
             image_path=str(image_path),
             hostname=context.hostname,
             git_repo=context.git_repo,
@@ -132,3 +135,7 @@ class CaptureService:
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
+
+
+def _can_replace_stale_capture(capture: Capture) -> bool:
+    return capture.caption is None and not Path(capture.image_path).is_file()

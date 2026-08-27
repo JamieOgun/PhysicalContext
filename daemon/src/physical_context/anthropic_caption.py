@@ -7,6 +7,13 @@ from anthropic import Anthropic
 from physical_context.captions import CaptionProviderError, StructuredCaption
 
 SYSTEM_PROMPT = """You create factual visual context for later retrieval.
+
+The summary is the single line shown in search results, so it must identify the
+scene: open with the subject and what is in it. Never open with the image's
+technical quality. Phrases describing resolution, focus, noise, or camera type
+belong in uncertainties, because wording repeated across every capture makes
+captures impossible to tell apart when searching.
+
 Describe only what is observable in the image. Do not assume the scene belongs to a
 particular domain. Record uncertainty instead of guessing. Report changes only when they
 are supported by the supplied previous-caption context."""

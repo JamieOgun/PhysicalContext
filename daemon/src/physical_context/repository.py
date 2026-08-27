@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import sqlite_vec
 
@@ -24,7 +25,9 @@ CAPTURE_COLUMNS = """
     brightness,
     is_blurry,
     is_dark,
-    state
+    state,
+    device_id,
+    ready_at
 """
 
 ALLOWED_STATE_TRANSITIONS = {
@@ -52,7 +55,7 @@ class CaptureRepository:
             connection.execute(
                 f"""
                 INSERT INTO captures ({CAPTURE_COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     capture.id,
@@ -71,6 +74,8 @@ class CaptureRepository:
                     capture.is_blurry,
                     capture.is_dark,
                     capture.state,
+                    capture.device_id,
+                    capture.ready_at,
                 ),
             )
         return capture
@@ -93,10 +98,16 @@ class CaptureRepository:
             if state not in ALLOWED_STATE_TRANSITIONS[current_state]:
                 raise InvalidCaptureStateError(f"Cannot transition {current_state} to {state}")
 
-            connection.execute(
-                "UPDATE captures SET state = ? WHERE id = ?",
-                (state, capture_id),
-            )
+            if state == CaptureState.READY:
+                connection.execute(
+                    "UPDATE captures SET state = ?, ready_at = ? WHERE id = ?",
+                    (state, utc_timestamp(), capture_id),
+                )
+            else:
+                connection.execute(
+                    "UPDATE captures SET state = ? WHERE id = ?",
+                    (state, capture_id),
+                )
 
     def record_quality(
         self,
@@ -325,6 +336,11 @@ class CaptureRepository:
         return _capture_from_row(row) if row is not None else None
 
 
+def utc_timestamp() -> str:
+    """ISO-8601 UTC with a Z suffix, matching created_at."""
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
 def _serialize_tags(tags: Sequence[str]) -> str:
     return json.dumps(list(tags), separators=(",", ":"))
 
@@ -359,6 +375,8 @@ def _capture_from_row(row: sqlite3.Row) -> Capture:
         brightness=row["brightness"],
         is_blurry=_optional_bool(row["is_blurry"]),
         is_dark=_optional_bool(row["is_dark"]),
+        device_id=row["device_id"],
+        ready_at=row["ready_at"],
         state=CaptureState(row["state"]),
     )
 

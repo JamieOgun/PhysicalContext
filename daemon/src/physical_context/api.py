@@ -7,6 +7,7 @@ from starlette.concurrency import run_in_threadpool
 from physical_context.capture_processor import CaptureTaskRunner
 from physical_context.capture_service import CaptureService, InvalidCaptureError
 from physical_context.models import CaptureState
+from physical_context.repository import CaptureRepository
 
 router = APIRouter()
 
@@ -19,6 +20,13 @@ class CaptureResponse(BaseModel):
     brightness: float | None
     is_blurry: bool | None
     is_dark: bool | None
+
+
+class CaptureStatusResponse(BaseModel):
+    capture_id: str
+    short_id: str
+    state: CaptureState
+    caption_available: bool
 
 
 @router.post("/capture", response_model=CaptureResponse, status_code=status.HTTP_201_CREATED)
@@ -66,4 +74,22 @@ async def create_capture(
         brightness=result.capture.brightness,
         is_blurry=result.capture.is_blurry,
         is_dark=result.capture.is_dark,
+    )
+
+
+@router.get("/capture/{capture_id}/status", response_model=CaptureStatusResponse)
+async def get_capture_status(request: Request, capture_id: str) -> CaptureStatusResponse:
+    repository = CaptureRepository(request.app.state.database)
+    capture = await run_in_threadpool(repository.get, capture_id)
+    if capture is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="capture not found",
+        )
+
+    return CaptureStatusResponse(
+        capture_id=capture.id,
+        short_id=capture.id[:8],
+        state=capture.state,
+        caption_available=capture.caption is not None,
     )

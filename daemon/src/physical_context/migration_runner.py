@@ -1,7 +1,12 @@
 import sqlite3
 from importlib import resources
 
-MIGRATIONS = ("001_initial.sql", "002_quality.sql", "003_vector_cosine.sql")
+MIGRATIONS = (
+    "001_initial.sql",
+    "002_quality.sql",
+    "003_vector_cosine.sql",
+    "004_device_and_ready_at.sql",
+)
 
 
 def apply_migrations(connection: sqlite3.Connection) -> None:

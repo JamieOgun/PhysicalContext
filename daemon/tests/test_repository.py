@@ -244,3 +244,29 @@ def test_write_embedding_requires_an_existing_captioned_capture(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="512"):
         repository.write_embedding(uncaptioned.id, [0.0])
+
+
+def test_ready_at_is_stamped_only_when_the_capture_becomes_searchable(tmp_path: Path) -> None:
+    _, repository = make_repository(tmp_path)
+    capture = make_capture()
+    repository.insert(capture)
+
+    assert repository.get(capture.id).ready_at is None
+
+    repository.transition_state(capture.id, CaptureState.CAPTIONING)
+    assert repository.get(capture.id).ready_at is None
+
+    repository.transition_state(capture.id, CaptureState.READY)
+    ready_at = repository.get(capture.id).ready_at
+
+    assert ready_at is not None
+    assert ready_at.endswith("Z")
+    assert ready_at >= capture.created_at
+
+
+def test_device_id_round_trips(tmp_path: Path) -> None:
+    _, repository = make_repository(tmp_path)
+    capture = replace(make_capture(), device_id="cores3-lite-1")
+    repository.insert(capture)
+
+    assert repository.get(capture.id).device_id == "cores3-lite-1"

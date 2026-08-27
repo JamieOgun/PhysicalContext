@@ -78,11 +78,15 @@ class SearchCapturesResult:
 class CaptureDetail:
     capture_id: str
     created_at: str
+    ready_at: str | None
     state: str
     caption: str | None
     tags: list[str]
+    device_id: str | None
     device_ts: int | None
-    hostname: str | None
+    # Named for its owner: this is the machine running the daemon, not where the
+    # picture was taken. The bare name reads as the latter and gets misreported.
+    daemon_hostname: str | None
     git_repo: str | None
     git_branch: str | None
     git_sha: str | None
@@ -132,11 +136,13 @@ class CaptureTools:
         return CaptureDetail(
             capture_id=capture.id,
             created_at=capture.created_at,
+            ready_at=capture.ready_at,
             state=str(capture.state),
             caption=capture.caption,
             tags=list(capture.tags),
+            device_id=capture.device_id,
             device_ts=capture.device_ts,
-            hostname=capture.hostname,
+            daemon_hostname=capture.hostname,
             git_repo=capture.git_repo,
             git_branch=capture.git_branch,
             git_sha=capture.git_sha,

@@ -26,4 +26,6 @@ class Capture:
     brightness: float | None = None
     is_blurry: bool | None = None
     is_dark: bool | None = None
+    device_id: str | None = None
+    ready_at: str | None = None
     state: CaptureState = CaptureState.PENDING

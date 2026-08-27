@@ -54,6 +54,7 @@ def seed(
         created_at=created_at,
         device_ts=1_777_000_000,
         image_path=str(image_path or Path(f"/tmp/{capture_id}.jpg")),
+        device_id="cores3-lite-1",
         hostname="jamie-laptop",
         git_repo="PhysicalContext",
         git_branch="master",
@@ -308,3 +309,16 @@ def test_a_bad_limit_reaches_the_model_as_an_explained_tool_error(tmp_path: Path
 
     assert not isinstance(error.value, UnexpectedToolError)
     assert "at least 1" in str(error.value)
+
+
+def test_get_capture_names_the_hostname_owner_and_exposes_the_device(tmp_path: Path) -> None:
+    """`hostname` alone reads as "where the photo was taken" and gets misreported."""
+    _, repository = make_environment(tmp_path)
+    capture = seed(repository, "capture-1")
+
+    detail = make_tools(repository).get_capture("capture-1")
+
+    assert detail.daemon_hostname == "jamie-laptop"
+    assert not hasattr(detail, "hostname")
+    assert detail.device_id == capture.device_id
+    assert detail.ready_at is not None

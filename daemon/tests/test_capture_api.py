@@ -141,6 +141,32 @@ def test_capture_runs_configured_caption_provider_automatically(tmp_path: Path) 
     )
 
 
+def test_capture_status_reports_processing_progress(tmp_path: Path) -> None:
+    with make_client(tmp_path, caption_provider=StaticCaptionProvider()) as client:
+        created = post_capture(client)
+        capture_id = created.json()["capture_id"]
+        repository = CaptureRepository(client.app.state.database)
+        capture = wait_for_state(repository, capture_id, CaptureState.READY)
+
+        response = client.get(f"/capture/{capture_id}/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "capture_id": capture_id,
+        "short_id": capture_id[:8],
+        "state": "ready",
+        "caption_available": True,
+    }
+    assert capture.caption is not None
+
+
+def test_capture_status_returns_not_found(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.get("/capture/missing/status")
+
+    assert response.status_code == 404
+
+
 def test_reupload_is_idempotent(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         first = post_capture(client)
@@ -155,6 +181,30 @@ def test_reupload_is_idempotent(tmp_path: Path) -> None:
         stored_images = list((tmp_path / "captures").glob("*.jpg"))
         assert len(stored_images) == 1
         assert stored_images[0].read_bytes() == JPEG_BYTES
+
+
+def test_reupload_replaces_stale_uncaptioned_capture_missing_image(tmp_path: Path) -> None:
+    settings = Settings(data_root=tmp_path, _env_file=None)
+    repository = CaptureRepository(initialize_storage(settings))
+    stale = Capture(
+        id="stale-capture",
+        client_capture_id="client-capture-1",
+        created_at="2026-08-26T12:00:00Z",
+        device_ts=1_777_000_000,
+        image_path=str(tmp_path / "captures" / "stale-capture.jpg"),
+        state=CaptureState.READY,
+    )
+    repository.insert(stale)
+
+    with TestClient(create_app(settings)) as client:
+        response = post_capture(client)
+        repository = CaptureRepository(client.app.state.database)
+
+        assert response.status_code == 201
+        assert response.json()["deduplicated"] is False
+        assert response.json()["capture_id"] != stale.id
+        assert repository.get(stale.id) is None
+        assert Path(repository.get(response.json()["capture_id"]).image_path).is_file()
 
 
 def test_capture_validates_image_and_required_fields(tmp_path: Path) -> None:
@@ -188,7 +238,7 @@ def test_capture_applies_configured_quality_thresholds(tmp_path: Path) -> None:
     assert response.json()["is_dark"] is True
 
 
-def test_startup_requeues_and_finishes_captioning_capture(tmp_path: Path) -> None:
+def test_startup_requeues_and_prunes_missing_captioning_capture(tmp_path: Path) -> None:
     settings = Settings(data_root=tmp_path, _env_file=None)
     repository = CaptureRepository(initialize_storage(settings))
     capture = Capture(
@@ -204,9 +254,7 @@ def test_startup_requeues_and_finishes_captioning_capture(tmp_path: Path) -> Non
     with TestClient(create_app(settings)):
         pass
 
-    recovered = repository.get(capture.id)
-    assert recovered.state == CaptureState.READY
-    assert recovered.caption is None
+    assert repository.get(capture.id) is None
 
 
 def test_capture_embeds_the_caption_it_just_generated(tmp_path: Path) -> None:
@@ -309,3 +357,18 @@ def test_unresolvable_git_context_never_blocks_ingest(tmp_path: Path) -> None:
     assert response.status_code == 201
     assert capture.hostname
     assert capture.git_repo is None
+
+
+def test_capture_persists_the_posting_device_and_ready_time(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        response = post_capture(client)
+        repository = CaptureRepository(client.app.state.database)
+        capture = wait_for_state(
+            repository,
+            response.json()["capture_id"],
+            CaptureState.READY,
+        )
+
+    assert capture.device_id == "cores3-lite-1"
+    assert capture.ready_at is not None
+    assert capture.ready_at >= capture.created_at

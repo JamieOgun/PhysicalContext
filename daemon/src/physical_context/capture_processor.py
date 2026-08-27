@@ -36,10 +36,20 @@ class CaptureProcessor:
             self._backfill_embedding(capture)
 
     def _caption_and_embed(self, capture: Capture) -> None:
+        image_path = Path(capture.image_path)
+        if not image_path.is_file():
+            logger.warning(
+                "caption_skipped capture_id=%s reason=image_missing image_path=%s",
+                capture.id,
+                image_path,
+            )
+            self.repository.delete(capture.id)
+            return
+
         self.repository.transition_state(capture.id, CaptureState.CAPTIONING)
         try:
             result = self.caption_provider.caption(
-                Path(capture.image_path),
+                image_path,
                 self.repository.get_previous_caption(capture.id),
             )
             caption = StructuredCaption.model_validate(result).to_search_text()

@@ -23,7 +23,7 @@ def test_migrations_create_schema_and_are_repeatable(tmp_path: Path) -> None:
             "SELECT sql FROM sqlite_master WHERE name = 'captures_vec'"
         ).fetchone()[0]
 
-    assert version == 3
+    assert version == 4
     assert {
         "captures",
         "captures_fts",
@@ -49,6 +49,8 @@ def test_migrations_create_schema_and_are_repeatable(tmp_path: Path) -> None:
         "is_blurry",
         "is_dark",
         "state",
+        "device_id",
+        "ready_at",
     } == capture_columns
     assert vec_version
     assert "distance_metric=cosine" in vec_schema

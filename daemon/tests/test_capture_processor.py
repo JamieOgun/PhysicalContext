@@ -20,13 +20,15 @@ def make_repository(tmp_path: Path) -> tuple[Database, CaptureRepository]:
     return database, CaptureRepository(database)
 
 
-def make_capture() -> Capture:
+def make_capture(tmp_path: Path) -> Capture:
+    image_path = tmp_path / "current.jpg"
+    image_path.write_bytes(b"jpeg")
     return Capture(
         id="current",
         client_capture_id="current-client-id",
         created_at="2026-08-26T12:00:00Z",
         device_ts=1_777_000_000,
-        image_path="/tmp/current.jpg",
+        image_path=str(image_path),
         state=CaptureState.PENDING,
     )
 
@@ -105,14 +107,14 @@ def fts_matches(database: Database, term: str) -> list[str]:
 def test_caption_success_stores_normalized_text_and_previous_context(tmp_path: Path) -> None:
     _, repository = make_repository(tmp_path)
     previous = replace(
-        make_capture(),
+        make_capture(tmp_path),
         id="previous",
         client_capture_id="previous-client-id",
         created_at="2026-08-26T11:00:00Z",
         caption="A close view of a person in front of curtains.",
         state=CaptureState.READY,
     )
-    current = make_capture()
+    current = make_capture(tmp_path)
     repository.insert(previous)
     repository.insert(current)
     provider = RecordingProvider()
@@ -131,7 +133,7 @@ def test_caption_success_stores_normalized_text_and_previous_context(tmp_path: P
 
 def test_caption_provider_failure_reaches_ready_with_null_caption(tmp_path: Path) -> None:
     _, repository = make_repository(tmp_path)
-    capture = make_capture()
+    capture = make_capture(tmp_path)
     repository.insert(capture)
 
     CaptureProcessor(
@@ -147,7 +149,7 @@ def test_caption_provider_failure_reaches_ready_with_null_caption(tmp_path: Path
 
 def test_malformed_caption_reaches_ready_with_null_caption(tmp_path: Path) -> None:
     _, repository = make_repository(tmp_path)
-    capture = make_capture()
+    capture = make_capture(tmp_path)
     repository.insert(capture)
 
     CaptureProcessor(
@@ -161,9 +163,26 @@ def test_malformed_caption_reaches_ready_with_null_caption(tmp_path: Path) -> No
     assert malformed.caption is None
 
 
+def test_missing_image_is_pruned_without_calling_caption_provider(tmp_path: Path) -> None:
+    _, repository = make_repository(tmp_path)
+    capture = make_capture(tmp_path)
+    Path(capture.image_path).unlink()
+    repository.insert(capture)
+    caption_provider = CountingProvider()
+
+    CaptureProcessor(
+        repository,
+        caption_provider,
+        UnavailableEmbeddingProvider("not configured"),
+    ).process(capture.id)
+
+    assert repository.get(capture.id) is None
+    assert caption_provider.calls == 0
+
+
 def test_successful_caption_embeds_as_document_and_stores_vector(tmp_path: Path) -> None:
     database, repository = make_repository(tmp_path)
-    capture = make_capture()
+    capture = make_capture(tmp_path)
     repository.insert(capture)
     embedding_provider = RecordingEmbeddingProvider()
 
@@ -178,7 +197,7 @@ def test_successful_caption_embeds_as_document_and_stores_vector(tmp_path: Path)
 
 def test_caption_failure_skips_embedding_entirely(tmp_path: Path) -> None:
     _, repository = make_repository(tmp_path)
-    capture = make_capture()
+    capture = make_capture(tmp_path)
     repository.insert(capture)
     embedding_provider = RecordingEmbeddingProvider()
 
@@ -191,7 +210,7 @@ def test_caption_failure_skips_embedding_entirely(tmp_path: Path) -> None:
 
 def test_embedding_failure_keeps_caption_searchable_and_queues_backfill(tmp_path: Path) -> None:
     database, repository = make_repository(tmp_path)
-    capture = make_capture()
+    capture = make_capture(tmp_path)
     repository.insert(capture)
 
     CaptureProcessor(repository, RecordingProvider(), FailingEmbeddingProvider()).process(
@@ -209,7 +228,7 @@ def test_embedding_failure_keeps_caption_searchable_and_queues_backfill(tmp_path
 def test_backfill_embeds_ready_capture_without_recaptioning(tmp_path: Path) -> None:
     _, repository = make_repository(tmp_path)
     capture = replace(
-        make_capture(),
+        make_capture(tmp_path),
         caption=make_caption().to_search_text(),
         state=CaptureState.READY,
     )
@@ -228,7 +247,7 @@ def test_backfill_embeds_ready_capture_without_recaptioning(tmp_path: Path) -> N
 def test_backfill_is_skipped_when_embedding_already_exists(tmp_path: Path) -> None:
     _, repository = make_repository(tmp_path)
     capture = replace(
-        make_capture(),
+        make_capture(tmp_path),
         caption=make_caption().to_search_text(),
         state=CaptureState.READY,
     )
@@ -244,7 +263,7 @@ def test_backfill_is_skipped_when_embedding_already_exists(tmp_path: Path) -> No
 def test_backfill_failure_leaves_capture_eligible_for_a_later_retry(tmp_path: Path) -> None:
     _, repository = make_repository(tmp_path)
     capture = replace(
-        make_capture(),
+        make_capture(tmp_path),
         caption=make_caption().to_search_text(),
         state=CaptureState.READY,
     )
