@@ -231,6 +231,73 @@ class CaptureRepository:
                 raise ValueError("An embedding requires a caption")
             _replace_embedding(connection, capture_id, validated_embedding)
 
+    def search_keyword(self, match_query: str, *, limit: int) -> tuple[tuple[str, float], ...]:
+        """Rank ready captions by FTS5 bm25, best first.
+
+        bm25 returns negative scores where lower is better, so ascending order
+        is descending relevance.
+        """
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT captures.id AS id, bm25(captures_fts) AS score
+                FROM captures_fts
+                JOIN captures ON captures.rowid = captures_fts.rowid
+                WHERE captures_fts MATCH ?
+                  AND captures.state = ?
+                  AND captures.caption IS NOT NULL
+                ORDER BY score, captures.created_at DESC
+                LIMIT ?
+                """,
+                (match_query, CaptureState.READY, limit),
+            ).fetchall()
+        return tuple((row["id"], row["score"]) for row in rows)
+
+    def search_semantic(
+        self,
+        embedding: Sequence[float],
+        *,
+        limit: int,
+        max_distance: float,
+    ) -> tuple[tuple[str, float], ...]:
+        """Rank ready captions by cosine distance, nearest first.
+
+        The k-nearest set is taken first and filtered afterwards, because vec0
+        applies `k` to the index scan rather than to the surviving join rows.
+        """
+        query_vector = sqlite_vec.serialize_float32(list(validate_embedding(embedding)))
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT neighbours.capture_id AS id, neighbours.distance AS distance
+                FROM (
+                    SELECT capture_id, distance
+                    FROM captures_vec
+                    WHERE embedding MATCH ? AND k = ?
+                    ORDER BY distance
+                ) AS neighbours
+                JOIN captures ON captures.id = neighbours.capture_id
+                WHERE captures.state = ?
+                  AND captures.caption IS NOT NULL
+                  AND neighbours.distance <= ?
+                ORDER BY neighbours.distance
+                """,
+                (query_vector, limit, CaptureState.READY, max_distance),
+            ).fetchall()
+        return tuple((row["id"], row["distance"]) for row in rows)
+
+    def list_by_ids(self, capture_ids: Sequence[str]) -> dict[str, Capture]:
+        if not capture_ids:
+            return {}
+
+        placeholders = ",".join("?" for _ in capture_ids)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT {CAPTURE_COLUMNS} FROM captures WHERE id IN ({placeholders})",
+                tuple(capture_ids),
+            ).fetchall()
+        return {row["id"]: _capture_from_row(row) for row in rows}
+
     def _get_by(self, column: str, value: str) -> Capture | None:
         with self.database.connect() as connection:
             row = connection.execute(

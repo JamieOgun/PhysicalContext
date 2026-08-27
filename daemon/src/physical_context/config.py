@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     data_root: Path = Path("~/.pcl")
     local_caption: bool = False
     local_embed: bool = False
+    semantic_distance_threshold: float = Field(default=0.6, ge=0, le=2)
     sharpness_threshold: float | None = Field(default=None, ge=0)
     brightness_threshold: float | None = Field(default=None, ge=0, le=255)
 

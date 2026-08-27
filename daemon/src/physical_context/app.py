@@ -14,6 +14,7 @@ from physical_context.image_quality import ImageQualityAnalyzer
 from physical_context.models import CaptureState
 from physical_context.repository import CaptureRepository
 from physical_context.runtime import initialize_storage
+from physical_context.search import CaptureSearch
 from physical_context.voyage_embedding import VoyageEmbeddingProvider
 
 
@@ -34,6 +35,11 @@ def create_app(
         active_embedding_provider = embedding_provider or _build_embedding_provider(active_settings)
         app.state.capture_tasks = CaptureTaskRunner(
             CaptureProcessor(repository, active_caption_provider, active_embedding_provider)
+        )
+        app.state.capture_search = CaptureSearch(
+            repository,
+            active_embedding_provider,
+            max_semantic_distance=active_settings.semantic_distance_threshold,
         )
         app.state.capture_service = CaptureService(
             repository,

@@ -19,8 +19,11 @@ def test_migrations_create_schema_and_are_repeatable(tmp_path: Path) -> None:
         }
         capture_columns = {row[1] for row in connection.execute("PRAGMA table_info(captures)")}
         vec_version = connection.execute("SELECT vec_version()").fetchone()[0]
+        vec_schema = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'captures_vec'"
+        ).fetchone()[0]
 
-    assert version == 2
+    assert version == 3
     assert {
         "captures",
         "captures_fts",
@@ -48,3 +51,4 @@ def test_migrations_create_schema_and_are_repeatable(tmp_path: Path) -> None:
         "state",
     } == capture_columns
     assert vec_version
+    assert "distance_metric=cosine" in vec_schema
