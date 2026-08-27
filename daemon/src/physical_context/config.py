@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = Field(default=8787, ge=1, le=65535)
     data_root: Path = Path("~/.pcl")
+    project_root: Path | None = None
     local_caption: bool = False
     local_embed: bool = False
     semantic_distance_threshold: float = Field(default=0.6, ge=0, le=2)
@@ -27,6 +28,12 @@ class Settings(BaseSettings):
     @property
     def resolved_data_root(self) -> Path:
         return self.data_root.expanduser().resolve()
+
+    @property
+    def resolved_project_root(self) -> Path | None:
+        if self.project_root is None:
+            return None
+        return self.project_root.expanduser().resolve()
 
     @property
     def captures_dir(self) -> Path:

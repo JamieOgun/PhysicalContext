@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from physical_context.ambient_context import AmbientContextResolver
 from physical_context.api import router as capture_router
 from physical_context.captions import CaptionProvider
 from physical_context.capture_processor import CaptureProcessor, CaptureTaskRunner
@@ -50,6 +51,7 @@ def create_app(
                 sharpness_threshold=active_settings.sharpness_threshold,
                 brightness_threshold=active_settings.brightness_threshold,
             ),
+            AmbientContextResolver(active_settings.resolved_project_root),
         )
         for capture_id in repository.list_ids_by_state(CaptureState.PENDING):
             app.state.capture_tasks.schedule(capture_id)

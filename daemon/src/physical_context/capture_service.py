@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO
 
+from physical_context.ambient_context import AmbientContextResolver
 from physical_context.image_quality import ImageDecodeError, ImageQualityAnalyzer
 from physical_context.models import Capture, CaptureState
 from physical_context.repository import CaptureRepository
@@ -29,10 +30,12 @@ class CaptureService:
         repository: CaptureRepository,
         captures_dir: Path,
         quality_analyzer: ImageQualityAnalyzer,
+        context_resolver: AmbientContextResolver | None = None,
     ) -> None:
         self.repository = repository
         self.captures_dir = captures_dir
         self.quality_analyzer = quality_analyzer
+        self.context_resolver = context_resolver or AmbientContextResolver()
 
     def ingest(
         self,
@@ -55,12 +58,17 @@ class CaptureService:
         image_path = self.captures_dir / f"{capture_id}.jpg"
         self._write_image(image, image_path)
 
+        context = self.context_resolver.resolve()
         capture = Capture(
             id=capture_id,
             client_capture_id=client_capture_id,
             created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             device_ts=device_ts,
             image_path=str(image_path),
+            hostname=context.hostname,
+            git_repo=context.git_repo,
+            git_branch=context.git_branch,
+            git_sha=context.git_sha,
             state=CaptureState.UPLOADED,
         )
 

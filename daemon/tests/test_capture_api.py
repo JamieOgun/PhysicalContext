@@ -32,9 +32,11 @@ def make_client(
     brightness_threshold: float | None = None,
     caption_provider: CaptionProvider | None = None,
     embedding_provider: EmbeddingProvider | None = None,
+    project_root: Path | None = None,
 ) -> TestClient:
     settings = Settings(
         data_root=tmp_path,
+        project_root=project_root,
         sharpness_threshold=sharpness_threshold,
         brightness_threshold=brightness_threshold,
         _env_file=None,
@@ -257,3 +259,53 @@ def test_startup_backfills_captions_left_without_an_embedding(tmp_path: Path) ->
     assert repository.has_embedding(capture.id) is True
     assert repository.get(capture.id).caption == capture.caption
     assert repository.list_ids_missing_embeddings() == ()
+
+
+def test_capture_records_ambient_context_at_ingest(tmp_path: Path, git_repository) -> None:
+    repository_root = git_repository(tmp_path, "project")
+    with make_client(tmp_path / "data", project_root=repository_root) as client:
+        response = post_capture(client)
+        repository = CaptureRepository(client.app.state.database)
+        capture = wait_for_state(
+            repository,
+            response.json()["capture_id"],
+            CaptureState.READY,
+        )
+
+    assert capture.hostname
+    assert capture.git_repo == "project"
+    assert capture.git_branch == "main"
+    assert capture.git_sha is not None
+    assert capture.created_at.endswith("Z")
+
+
+def test_capture_without_a_configured_project_still_records_host_and_time(
+    tmp_path: Path,
+) -> None:
+    with make_client(tmp_path) as client:
+        response = post_capture(client)
+        repository = CaptureRepository(client.app.state.database)
+        capture = wait_for_state(
+            repository,
+            response.json()["capture_id"],
+            CaptureState.READY,
+        )
+
+    assert capture.hostname
+    assert capture.created_at.endswith("Z")
+    assert (capture.git_repo, capture.git_branch, capture.git_sha) == (None, None, None)
+
+
+def test_unresolvable_git_context_never_blocks_ingest(tmp_path: Path) -> None:
+    with make_client(tmp_path / "data", project_root=tmp_path / "not-a-repo") as client:
+        response = post_capture(client)
+        repository = CaptureRepository(client.app.state.database)
+        capture = wait_for_state(
+            repository,
+            response.json()["capture_id"],
+            CaptureState.READY,
+        )
+
+    assert response.status_code == 201
+    assert capture.hostname
+    assert capture.git_repo is None
