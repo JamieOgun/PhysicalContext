@@ -1,5 +1,60 @@
 # Physical Context Layer
 
+Physical Context Layer gives AI coding agents access to relevant context from
+the physical world. It is a dedicated, one-button camera for a workbench: take
+a picture of a circuit, mechanism, tool, sketch, or failure state and make it
+searchable from an agent such as Claude Code or Cursor within seconds.
+
+The product is intended for robotics and hardware work where important context
+exists outside the computer. It removes the usual phone-to-laptop workflow of
+taking a photo, transferring it, and explaining it again in a chat.
+
+## How It Works
+
+1. The CoreS3 displays a live camera view so the user can frame the scene.
+2. A single button press captures and queues the image.
+3. The device uploads the image to the Physical Context daemon over local Wi-Fi.
+4. The daemon stores the image, records time and project context, and generates
+   a structured visual caption.
+5. The caption is indexed for keyword and semantic search.
+6. A connected coding agent can search captures by description and request the
+   original image only when the pixels are needed.
+
+The device shows each stage directly on its display: capturing, sending,
+captioning, saved, retrying, or failed. Upload and caption processing run in the
+background, so the camera can return to the live viewfinder for another capture.
+
+## Product Goals
+
+- Capture real-world engineering context without using a phone.
+- Keep the interaction to one physical button press.
+- Make previous observations retrievable by natural-language description.
+- Give agents text context by default and image data only on explicit request.
+- Preserve useful captures even when captioning or embedding services fail.
+
+## System Overview
+
+```text
+M5Stack CoreS3 + trigger button
+            |
+            | JPEG over local Wi-Fi
+            v
+Physical Context daemon
+  - local image storage
+  - structured visual captioning
+  - keyword and semantic indexing
+            |
+            | MCP tools
+            v
+Claude Code, Cursor, or another MCP client
+```
+
+Captured images and metadata are stored locally under `~/.pcl`. When remote
+captioning or embedding providers are configured, image or caption data is sent
+to those providers for processing. See [the product requirements](docs/prd.md)
+for the full scope and design decisions, and the
+[CoreS3 firmware guide](firmware/cores3_smoke_test/README.md) for device setup.
+
 ## Hardware
 
 - Core device: M5Stack CoreS3-Lite ESP32-S3 IoT.
