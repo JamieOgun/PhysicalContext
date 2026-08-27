@@ -5,6 +5,8 @@
 
 namespace {
 constexpr unsigned long ANIMATION_FRAME_MS = 100;
+constexpr int VIEWFINDER_TOP = 28;
+constexpr int VIEWFINDER_BOTTOM = 180;
 
 constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue) {
   return static_cast<uint16_t>(((red & 0xF8) << 8) |
@@ -12,6 +14,7 @@ constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue) {
 }
 
 constexpr uint16_t COLOR_BACKGROUND = rgb565(12, 17, 23);
+constexpr uint16_t COLOR_OVERLAY = rgb565(7, 11, 15);
 constexpr uint16_t COLOR_SURFACE = rgb565(25, 33, 42);
 constexpr uint16_t COLOR_MUTED = rgb565(143, 156, 168);
 constexpr uint16_t COLOR_CYAN = rgb565(48, 199, 211);
@@ -110,7 +113,7 @@ uint16_t StatusUi::accentColor() const {
   return COLOR_CYAN;
 }
 
-void StatusUi::drawIndicator() {
+void StatusUi::drawFullScreenIndicator() {
   constexpr int8_t DOT_X[] = {0, 14, 20, 14, 0, -14, -20, -14};
   constexpr int8_t DOT_Y[] = {-20, -14, 0, 14, 20, 14, 0, -14};
   constexpr int CENTER_X = 160;
@@ -143,7 +146,53 @@ void StatusUi::drawIndicator() {
   }
 }
 
-void StatusUi::drawScreen() {
+void StatusUi::drawReticle() {
+  constexpr int LEFT = 132;
+  constexpr int RIGHT = 188;
+  constexpr int TOP = 88;
+  constexpr int BOTTOM = 144;
+  constexpr int CORNER = 11;
+
+  M5.Display.drawFastHLine(LEFT, TOP, CORNER, TFT_WHITE);
+  M5.Display.drawFastVLine(LEFT, TOP, CORNER, TFT_WHITE);
+  M5.Display.drawFastHLine(RIGHT - CORNER, TOP, CORNER, TFT_WHITE);
+  M5.Display.drawFastVLine(RIGHT, TOP, CORNER, TFT_WHITE);
+  M5.Display.drawFastHLine(LEFT, BOTTOM, CORNER, TFT_WHITE);
+  M5.Display.drawFastVLine(LEFT, BOTTOM - CORNER, CORNER, TFT_WHITE);
+  M5.Display.drawFastHLine(RIGHT - CORNER, BOTTOM, CORNER, TFT_WHITE);
+  M5.Display.drawFastVLine(RIGHT, BOTTOM - CORNER, CORNER, TFT_WHITE);
+}
+
+void StatusUi::drawOverlayIndicator() {
+  constexpr int8_t DOT_X[] = {0, 6, 9, 6, 0, -6, -9, -6};
+  constexpr int8_t DOT_Y[] = {-9, -6, 0, 6, 9, 6, 0, -6};
+  constexpr int CENTER_X = 25;
+  constexpr int CENTER_Y = 209;
+
+  M5.Display.fillRect(8, 192, 34, 34, COLOR_OVERLAY);
+  uint16_t accent = accentColor();
+  if (isAnimated()) {
+    for (int i = 0; i < 8; ++i) {
+      int distance = (i - animationFrame_ + 8) % 8;
+      uint16_t color = distance == 0 ? accent :
+                       distance <= 2 ? COLOR_MUTED : COLOR_SURFACE;
+      M5.Display.fillCircle(CENTER_X + DOT_X[i], CENTER_Y + DOT_Y[i],
+                            distance == 0 ? 3 : 2, color);
+    }
+    return;
+  }
+
+  M5.Display.fillCircle(CENTER_X, CENTER_Y, 12, accent);
+  if (state_ == UiState::Complete || state_ == UiState::Idle) {
+    M5.Display.drawLine(19, 209, 23, 213, COLOR_OVERLAY);
+    M5.Display.drawLine(23, 213, 31, 204, COLOR_OVERLAY);
+  } else {
+    M5.Display.fillRect(24, 202, 2, 9, COLOR_OVERLAY);
+    M5.Display.fillCircle(25, 215, 1, COLOR_OVERLAY);
+  }
+}
+
+void StatusUi::drawFullScreen() {
   M5.Display.fillScreen(COLOR_BACKGROUND);
   M5.Display.setTextWrap(false);
 
@@ -158,7 +207,7 @@ void StatusUi::drawScreen() {
   M5.Display.setCursor(265, 14);
   M5.Display.print(connectionLabel);
 
-  drawIndicator();
+  drawFullScreenIndicator();
   drawCenteredText(title(), 132, 3, TFT_WHITE);
   drawCenteredText(detail(), 171, 1, COLOR_MUTED);
 
@@ -174,6 +223,80 @@ void StatusUi::drawScreen() {
   drawCenteredText(countLabel, 224, 1, COLOR_MUTED);
 }
 
+void StatusUi::drawOverlay() {
+  M5.Display.setTextWrap(false);
+  M5.Display.fillRect(0, 0, M5.Display.width(), VIEWFINDER_TOP, COLOR_OVERLAY);
+  M5.Display.fillRect(0, VIEWFINDER_BOTTOM, M5.Display.width(),
+                      M5.Display.height() - VIEWFINDER_BOTTOM, COLOR_OVERLAY);
+  M5.Display.fillRect(0, VIEWFINDER_BOTTOM, 4,
+                      M5.Display.height() - VIEWFINDER_BOTTOM, accentColor());
+
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(TFT_WHITE, COLOR_OVERLAY);
+  M5.Display.setCursor(10, 10);
+  M5.Display.print("PHYSICAL CONTEXT");
+
+  char countLabel[16];
+  snprintf(countLabel, sizeof(countLabel), "%d SHOTS", count_);
+  M5.Display.setTextColor(COLOR_MUTED, COLOR_OVERLAY);
+  M5.Display.setCursor(181, 10);
+  M5.Display.print(countLabel);
+
+  bool connected = WiFi.status() == WL_CONNECTED;
+  M5.Display.fillCircle(269, 13, 4, connected ? COLOR_GREEN : COLOR_AMBER);
+  M5.Display.setCursor(279, 10);
+  M5.Display.print(connected ? "ON" : "OFF");
+
+  if (state_ == UiState::Idle || state_ == UiState::Capturing) {
+    drawReticle();
+  }
+
+  drawOverlayIndicator();
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(TFT_WHITE, COLOR_OVERLAY);
+  M5.Display.setCursor(48, 188);
+  M5.Display.print(title());
+
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_MUTED, COLOR_OVERLAY);
+  M5.Display.setCursor(48, 216);
+  M5.Display.print(detail());
+
+  if (shortId_[0] != '\0') {
+    M5.Display.setTextColor(accentColor(), COLOR_OVERLAY);
+    M5.Display.setCursor(256, 190);
+    M5.Display.print(shortId_);
+  }
+}
+
+void StatusUi::draw() {
+  if (viewfinderMode_) {
+    drawOverlay();
+  } else {
+    drawFullScreen();
+  }
+}
+
+void StatusUi::setViewfinderMode(bool enabled) {
+  viewfinderMode_ = enabled;
+  draw();
+}
+
+void StatusUi::drawCameraFrame(const uint16_t* pixels, int width, int height) {
+  if (!viewfinderMode_ || pixels == nullptr || width <= 0 ||
+      height <= VIEWFINDER_TOP) {
+    return;
+  }
+
+  int contentBottom = height < VIEWFINDER_BOTTOM ? height : VIEWFINDER_BOTTOM;
+  int contentHeight = contentBottom - VIEWFINDER_TOP;
+  M5.Display.pushImage(0, VIEWFINDER_TOP, width, contentHeight,
+                       pixels + width * VIEWFINDER_TOP);
+  if (state_ == UiState::Idle || state_ == UiState::Capturing) {
+    drawReticle();
+  }
+}
+
 void StatusUi::setState(UiState state, int count, const char* shortId,
                         const char* detail) {
   state_ = state;
@@ -182,7 +305,7 @@ void StatusUi::setState(UiState state, int count, const char* shortId,
   snprintf(detail_, sizeof(detail_), "%s", detail == nullptr ? "" : detail);
   animationFrame_ = 0;
   lastAnimationAt_ = millis();
-  drawScreen();
+  draw();
 }
 
 void StatusUi::update() {
@@ -191,5 +314,9 @@ void StatusUi::update() {
   }
   lastAnimationAt_ = millis();
   animationFrame_ = (animationFrame_ + 1) % 8;
-  drawIndicator();
+  if (viewfinderMode_) {
+    drawOverlayIndicator();
+  } else {
+    drawFullScreenIndicator();
+  }
 }

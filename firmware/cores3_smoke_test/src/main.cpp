@@ -21,6 +21,8 @@ constexpr unsigned long CONFIRMATION_MS = 3000;
 constexpr unsigned long RETRY_DELAY_MS = 2000;
 constexpr unsigned long STATUS_POLL_MS = 500;
 constexpr unsigned long STATUS_TIMEOUT_MS = 90000;
+constexpr unsigned long PREVIEW_FRAME_MS = 100;
+constexpr unsigned long CAPTURE_FREEZE_MS = 650;
 constexpr uint8_t JPEG_QUALITY = 80;
 constexpr size_t UPLOAD_QUEUE_SIZE = 3;
 constexpr char MULTIPART_BOUNDARY[] = "----PhysicalContextBoundary7MA4YWxk";
@@ -114,6 +116,9 @@ char deviceId[24] = {};
 int captureCount = 0;
 bool confirmationVisible = false;
 unsigned long confirmationStartedAt = 0;
+unsigned long previewFrozenUntil = 0;
+unsigned long lastPreviewAt = 0;
+bool cameraReady = false;
 StatusUi statusUi;
 
 bool GC0308::begin() {
@@ -151,6 +156,27 @@ bool GC0308::free() {
   }
   esp_camera_fb_return(fb);
   fb = nullptr;
+  return true;
+}
+
+bool previewIsFrozen(unsigned long now) {
+  return static_cast<long>(previewFrozenUntil - now) > 0;
+}
+
+bool renderLivePreview(bool force = false) {
+  unsigned long now = millis();
+  if (!cameraReady || previewIsFrozen(now) ||
+      (!force && now - lastPreviewAt < PREVIEW_FRAME_MS)) {
+    return false;
+  }
+  if (!Camera.get()) {
+    return false;
+  }
+
+  statusUi.drawCameraFrame(reinterpret_cast<uint16_t*>(Camera.fb->buf),
+                           Camera.fb->width, Camera.fb->height);
+  Camera.free();
+  lastPreviewAt = now;
   return true;
 }
 
@@ -402,8 +428,9 @@ bool captureAndQueue(int count) {
     return false;
   }
 
-  M5.Display.pushImage(0, 0, Camera.fb->width, Camera.fb->height,
-                       reinterpret_cast<uint16_t*>(Camera.fb->buf));
+  statusUi.drawCameraFrame(reinterpret_cast<uint16_t*>(Camera.fb->buf),
+                           Camera.fb->width, Camera.fb->height);
+  previewFrozenUntil = millis() + CAPTURE_FREEZE_MS;
 
   uint8_t* jpegBuffer = nullptr;
   size_t jpegLength = 0;
@@ -539,12 +566,15 @@ void setup() {
   }
 
   Camera.sensor->set_framesize(Camera.sensor, FRAMESIZE_QVGA);
+  cameraReady = true;
   xTaskCreatePinnedToCore(uploadWorkerTask, "capture-upload", 8192, nullptr, 1,
                           nullptr, 0);
   xTaskCreatePinnedToCore(captionStatusWorkerTask, "caption-status", 6144,
                           nullptr, 1, nullptr, 0);
   Serial.printf("Camera ready; daemon=%s device=%s\n", DAEMON_URL, deviceId);
+  statusUi.setViewfinderMode(true);
   statusUi.setState(UiState::Idle, 0);
+  renderLivePreview(true);
 }
 
 void loop() {
@@ -576,6 +606,8 @@ void loop() {
     statusUi.setState(UiState::Idle, captureCount);
     confirmationVisible = false;
   }
+
+  renderLivePreview();
 
   lastTriggered = triggered;
   delay(10);

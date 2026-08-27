@@ -18,13 +18,19 @@ enum class UiState : uint8_t {
 
 class StatusUi {
 public:
+  void setViewfinderMode(bool enabled);
+  void drawCameraFrame(const uint16_t* pixels, int width, int height);
   void setState(UiState state, int count, const char* shortId = nullptr,
                 const char* detail = nullptr);
   void update();
 
 private:
-  void drawScreen();
-  void drawIndicator();
+  void draw();
+  void drawFullScreen();
+  void drawOverlay();
+  void drawFullScreenIndicator();
+  void drawOverlayIndicator();
+  void drawReticle();
   void drawCenteredText(const char* text, int y, int preferredSize,
                         uint16_t color, int maxWidth = 296);
   const char* title() const;
@@ -38,4 +44,5 @@ private:
   char detail_[48] = {};
   uint8_t animationFrame_ = 0;
   unsigned long lastAnimationAt_ = 0;
+  bool viewfinderMode_ = false;
 };

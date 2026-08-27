@@ -1,13 +1,15 @@
+import base64
 import logging
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Image
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult, ImageContent, TextContent
 
 from physical_context.config import Settings
 from physical_context.embeddings import EmbeddingProvider
@@ -23,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 SERVER_NAME = "physical-context"
 MAX_LIMIT = 25
+
+# Search results carry pixels at half the edge of a get_image call: enough to
+# tell captures apart at a glance, a quarter of the tokens, and it leaves
+# get_image as the tier you escalate to when you need to read fine detail.
+SEARCH_IMAGE_EDGE = 512
 
 
 class ImageUnavailableError(RuntimeError):
@@ -165,6 +172,28 @@ class CaptureTools:
             for capture in self.repository.list_recent(limit=_checked_limit(limit))
         ]
 
+    def thumbnails(self, capture_ids: list[str]) -> list[tuple[str, bytes]]:
+        """Small images for search results, skipping any capture missing its file.
+
+        A capture whose file is gone must still appear as a text match, so a
+        missing or unreadable image is dropped rather than raised.
+        """
+        found: list[tuple[str, bytes]] = []
+        for capture_id in capture_ids:
+            capture = self.repository.get(capture_id)
+            if capture is None:
+                continue
+            image_path = Path(capture.image_path)
+            if not image_path.is_file():
+                continue
+            try:
+                found.append(
+                    (capture_id, load_downscaled_jpeg(image_path, max_edge=SEARCH_IMAGE_EDGE))
+                )
+            except ImageDecodeError:
+                logger.warning("thumbnail_unreadable capture_id=%s", capture_id)
+        return found
+
     def get_image_bytes(self, capture_id: str) -> bytes:
         capture = self._require(capture_id)
         image_path = Path(capture.image_path)
@@ -215,20 +244,48 @@ def create_mcp_server(
     mcp = MCPServer(SERVER_NAME)
 
     @mcp.tool()
-    def search_captures(query: str, limit: int = DEFAULT_LIMIT) -> SearchCapturesResult:
+    def search_captures(
+        query: str,
+        limit: int = DEFAULT_LIMIT,
+        include_images: bool = True,
+    ) -> SearchCapturesResult:
         """Find captures of the user's physical workspace by describing them.
 
         Searches caption text two ways at once: keyword matching for precise
         references ("J4", "U3"), and semantic similarity for descriptions that
-        do not share the caption's wording ("looked burnt"). Returns text only.
+        do not share the caption's wording ("looked burnt").
 
-        Each match carries the caption's summary line. For the full structured
-        caption and metadata call get_capture; to actually look at the photo
-        call get_image. If nothing matches, `matches` is empty and `note` says
-        so rather than returning unrelated captures.
+        Each match carries the caption's summary line, and by default the photo
+        itself at reduced size, so you can see what was captured without a
+        second call. Pass include_images=False when you only need to scan text,
+        or when a wide limit would return more pictures than you want to look
+        at. Call get_image for one capture at full size when you need to read
+        fine detail, and get_capture for the complete structured caption.
+
+        If nothing matches, `matches` is empty and `note` says so rather than
+        returning unrelated captures.
         """
         with _explained_errors():
-            return tools.search_captures(query, limit)
+            result = tools.search_captures(query, limit)
+            if not include_images or not result.matches:
+                return result
+
+            blocks: list[TextContent | ImageContent] = []
+            for capture_id, image in tools.thumbnails(
+                [match.capture_id for match in result.matches]
+            ):
+                # Label each image so the model can tie pixels to the right match.
+                blocks.append(TextContent(type="text", text=f"capture {capture_id}:"))
+                blocks.append(
+                    ImageContent(
+                        type="image",
+                        data=base64.b64encode(image).decode("ascii"),
+                        mimeType="image/jpeg",
+                    )
+                )
+            if not blocks:
+                return result
+            return CallToolResult(content=blocks, structured_content=asdict(result))
 
     @mcp.tool()
     def get_capture(capture_id: str) -> CaptureDetail:

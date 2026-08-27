@@ -10,7 +10,12 @@ from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from physical_context.config import Settings
 from physical_context.embeddings import EMBEDDING_DIMENSIONS, EmbeddingInputType
 from physical_context.images import MAX_IMAGE_EDGE
-from physical_context.mcp_server import MAX_LIMIT, CaptureTools, create_mcp_server
+from physical_context.mcp_server import (
+    MAX_LIMIT,
+    SEARCH_IMAGE_EDGE,
+    CaptureTools,
+    create_mcp_server,
+)
 from physical_context.models import Capture, CaptureState
 from physical_context.repository import CaptureRepository
 from physical_context.runtime import initialize_storage
@@ -322,3 +327,77 @@ def test_get_capture_names_the_hostname_owner_and_exposes_the_device(tmp_path: P
     assert not hasattr(detail, "hostname")
     assert detail.device_id == capture.device_id
     assert detail.ready_at is not None
+
+
+def test_search_returns_pixels_alongside_the_structured_matches(tmp_path: Path) -> None:
+    settings, repository = make_environment(tmp_path)
+    image_path = tmp_path / "captures" / "capture-1.jpg"
+    write_jpeg(image_path, width=2048, height=1536)
+    seed(repository, "capture-1", image_path=image_path)
+    server = create_mcp_server(settings, embedding_provider=StubEmbeddingProvider())
+
+    result = call(server, "search_captures", {"query": "J4 header"})
+
+    assert result.structured_content["matches"][0]["capture_id"] == "capture-1"
+    images = [block for block in result.content if block.type == "image"]
+    labels = [block.text for block in result.content if block.type == "text"]
+    assert len(images) == 1
+    assert any("capture-1" in label for label in labels)
+
+
+def test_search_images_are_smaller_than_a_get_image_call(tmp_path: Path) -> None:
+    settings, repository = make_environment(tmp_path)
+    image_path = tmp_path / "captures" / "capture-1.jpg"
+    write_jpeg(image_path, width=2048, height=1536)
+    seed(repository, "capture-1", image_path=image_path)
+    server = create_mcp_server(settings, embedding_provider=StubEmbeddingProvider())
+
+    searched = call(server, "search_captures", {"query": "J4 header"})
+    full = call(server, "get_image", {"capture_id": "capture-1"})
+
+    def edge(block) -> int:
+        buffer = np.frombuffer(base64.b64decode(block.data), dtype=np.uint8)
+        return max(cv2.imdecode(buffer, cv2.IMREAD_COLOR).shape[:2])
+
+    thumbnail = next(b for b in searched.content if b.type == "image")
+    assert edge(thumbnail) == SEARCH_IMAGE_EDGE
+    assert edge(full.content[0]) == MAX_IMAGE_EDGE
+    assert edge(thumbnail) < edge(full.content[0])
+
+
+def test_search_can_opt_out_of_images(tmp_path: Path) -> None:
+    settings, repository = make_environment(tmp_path)
+    image_path = tmp_path / "captures" / "capture-1.jpg"
+    write_jpeg(image_path, width=640, height=480)
+    seed(repository, "capture-1", image_path=image_path)
+    server = create_mcp_server(settings, embedding_provider=StubEmbeddingProvider())
+
+    result = call(server, "search_captures", {"query": "J4 header", "include_images": False})
+
+    assert result.structured_content["matches"][0]["capture_id"] == "capture-1"
+    assert [block for block in result.content if block.type == "image"] == []
+
+
+def test_a_match_whose_image_is_missing_still_returns_as_text(tmp_path: Path) -> None:
+    """A capture can outlive its file; losing pixels must not lose the match."""
+    settings, repository = make_environment(tmp_path)
+    seed(repository, "no-file", image_path=tmp_path / "gone.jpg")
+    server = create_mcp_server(settings, embedding_provider=StubEmbeddingProvider())
+
+    result = call(server, "search_captures", {"query": "J4 header"})
+
+    assert result.structured_content["matches"][0]["capture_id"] == "no-file"
+    assert [block for block in result.content if block.type == "image"] == []
+
+
+def test_no_match_returns_no_images(tmp_path: Path) -> None:
+    settings, repository = make_environment(tmp_path)
+    image_path = tmp_path / "captures" / "capture-1.jpg"
+    write_jpeg(image_path, width=640, height=480)
+    seed(repository, "capture-1", image_path=image_path)
+    server = create_mcp_server(settings, embedding_provider=StubEmbeddingProvider())
+
+    result = call(server, "search_captures", {"query": "xylophone"})
+
+    assert result.structured_content["matches"] == []
+    assert [block for block in result.content if block.type == "image"] == []
