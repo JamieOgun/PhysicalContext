@@ -133,12 +133,13 @@ bool GC0308::begin() {
     return false;
   }
 
-  // The GC0308 delivers a horizontally mirrored frame. Any text in the scene
-  // then reaches the captioner reversed, which makes the caption's visible-text
-  // field worthless for retrieval. If pictures still read mirrored after
-  // flashing, change this 1 to a 0.
+  // The GC0308 powers up mirrored, so any text in the scene reaches the
+  // captioner reversed and the caption's visible-text field is worthless for
+  // retrieval. Passing 1 here means "enable mirroring", which was a no-op that
+  // preserved the flip; 0 turns it off. The preview shares this framebuffer,
+  // so the screen un-mirrors along with the stored JPEG.
   if (sensor->set_hmirror != nullptr) {
-    Serial.printf("Camera hmirror: %d\n", sensor->set_hmirror(sensor, 1));
+    Serial.printf("Camera hmirror: %d\n", sensor->set_hmirror(sensor, 0));
   } else {
     Serial.println("Camera hmirror unsupported by this sensor driver");
   }
