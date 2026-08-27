@@ -1,9 +1,14 @@
+import logging
 from pathlib import Path
 
 import pytest
 
 from physical_context.database import Database
-from physical_context.embeddings import EMBEDDING_DIMENSIONS, EmbeddingInputType
+from physical_context.embeddings import (
+    EMBEDDING_DIMENSIONS,
+    EmbeddingInputType,
+    UnavailableEmbeddingProvider,
+)
 from physical_context.models import Capture, CaptureState
 from physical_context.repository import CaptureRepository
 from physical_context.search import (
@@ -324,3 +329,29 @@ def test_fts_query_builder_strips_syntax_and_short_tokens() -> None:
     assert to_fts_match_query("a b c") is None
     assert to_fts_match_query("!!!") is None
     assert to_fts_match_query("") is None
+
+
+def test_an_unconfigured_provider_warns_without_a_traceback(tmp_path: Path, caplog) -> None:
+    """An embedding provider that is switched off is a steady state, not an incident."""
+    _, repository = make_repository(tmp_path)
+    seed_two_axis_corpus(repository)
+    search = CaptureSearch(repository, UnavailableEmbeddingProvider("no key configured"))
+
+    with caplog.at_level(logging.DEBUG, logger="physical_context.search"):
+        response = search.search("J4 header")
+
+    assert [record.levelname for record in caplog.records] == ["WARNING"]
+    assert caplog.records[0].exc_info is None
+    assert "no key configured" in caplog.records[0].getMessage()
+    assert {result.capture_id for result in response.results} == {"both-arms", "keyword-only"}
+
+
+def test_an_unexpected_provider_crash_is_logged_with_its_traceback(tmp_path: Path, caplog) -> None:
+    _, repository = make_repository(tmp_path)
+    seed_two_axis_corpus(repository)
+
+    with caplog.at_level(logging.DEBUG, logger="physical_context.search"):
+        CaptureSearch(repository, FailingEmbeddingProvider()).search("J4 header")
+
+    assert [record.levelname for record in caplog.records] == ["ERROR"]
+    assert caplog.records[0].exc_info is not None

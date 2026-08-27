@@ -36,3 +36,34 @@ uv run uvicorn physical_context.app:app --reload --host 0.0.0.0 --port 8787
 uv run ruff check .
 uv run pytest
 ```
+
+## MCP Server
+
+The capture store is exposed to MCP clients (Claude Code, Cursor) over stdio by
+`pcl-mcp`. It reads the same `~/.pcl` database as the daemon and needs no
+running daemon of its own, though captures only appear once the daemon has
+ingested and captioned them.
+
+```sh
+cd daemon
+uv run pcl-mcp
+```
+
+To register it with Claude Code:
+
+```sh
+claude mcp add physical-context -- uv run --directory /absolute/path/to/daemon pcl-mcp
+```
+
+Tools, cheapest first — prefer the earliest one that answers the question:
+
+| Tool | Returns | Use for |
+| --- | --- | --- |
+| `search_captures` | Capture IDs, timestamps, caption summary lines, tags | Finding captures by description; hybrid keyword + semantic |
+| `list_recent` | The newest captures, any state | "What was I just working on" |
+| `get_capture` | The full structured caption and metadata for one ID | Reading the whole caption |
+| `get_image` | One photo, downscaled to a 1024px longest edge | When the pixels matter and the caption does not answer |
+
+Image bytes are served **only** by `get_image`, one capture at a time. Without
+`PCL_VOYAGE_API_KEY` set, search degrades to keyword-only and says so in the
+response note.

@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
-from physical_context.embeddings import EmbeddingProvider
+from physical_context.embeddings import EmbeddingProvider, EmbeddingProviderError
 from physical_context.models import Capture
 from physical_context.repository import CaptureRepository
 
@@ -28,6 +28,8 @@ CANDIDATE_MULTIPLIER = 4
 # survive, which makes operator injection impossible by construction.
 _FTS_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+")
 
+_KEYWORD_ONLY_NOTE = "Semantic search was unavailable, so these are keyword matches only."
+
 # One arm's ranked output: capture id paired with that arm's own relevance
 # figure, which fusion deliberately discards in favour of position.
 Hits = tuple[tuple[str, float], ...]
@@ -45,6 +47,7 @@ class SearchResult:
     short_id: str
     created_at: str
     snippet: str
+    tags: tuple[str, ...]
     matched_by: MatchSource
     score: float
 
@@ -104,9 +107,14 @@ class CaptureSearch:
     def _search_semantic(self, query: str, limit: int) -> tuple[Hits, str | None]:
         try:
             embedding = self.embedding_provider.embed(query, input_type="query")
+        except EmbeddingProviderError as error:
+            # A provider that is switched off or unconfigured is a steady state,
+            # not an incident: every query would otherwise log a traceback.
+            logger.warning("query_embedding_unavailable reason=%s", error)
+            return (), _KEYWORD_ONLY_NOTE
         except Exception:
             logger.exception("query_embedding_failed")
-            return (), "Semantic search was unavailable, so these are keyword matches only."
+            return (), _KEYWORD_ONLY_NOTE
 
         return (
             self.repository.search_semantic(
@@ -175,6 +183,7 @@ def _build_results(
             short_id=capture.id[:8],
             created_at=capture.created_at,
             snippet=_snippet(capture.caption or ""),
+            tags=capture.tags,
             matched_by=_match_source(matched_sources),
             score=round(score, 6),
         )

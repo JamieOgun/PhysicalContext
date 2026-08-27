@@ -286,6 +286,24 @@ class CaptureRepository:
             ).fetchall()
         return tuple((row["id"], row["distance"]) for row in rows)
 
+    def list_recent(self, *, limit: int) -> tuple[Capture, ...]:
+        """Most recent captures, newest first, regardless of state.
+
+        Unlike the search arms this does not filter to `ready`: the most recent
+        capture is often still being captioned, and "what did I just do" is
+        exactly the question this answers.
+        """
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT {CAPTURE_COLUMNS} FROM captures
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return tuple(_capture_from_row(row) for row in rows)
+
     def list_by_ids(self, capture_ids: Sequence[str]) -> dict[str, Capture]:
         if not capture_ids:
             return {}

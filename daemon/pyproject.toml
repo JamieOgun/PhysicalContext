@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
   "anthropic>=0.77,<1",
   "fastapi>=0.116,<1",
+  "mcp>=2,<3",
   "opencv-python-headless>=4.13,<5",
   "pydantic-settings>=2.10,<3",
   "python-multipart>=0.0.20,<1",
@@ -20,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 pcl-daemon = "physical_context.cli:main"
+pcl-mcp = "physical_context.mcp_server:main"
 
 [dependency-groups]
 dev = [

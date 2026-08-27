@@ -3,19 +3,21 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from physical_context.anthropic_caption import AnthropicCaptionProvider
 from physical_context.api import router as capture_router
-from physical_context.captions import CaptionProvider, UnavailableCaptionProvider
+from physical_context.captions import CaptionProvider
 from physical_context.capture_processor import CaptureProcessor, CaptureTaskRunner
 from physical_context.capture_service import CaptureService
 from physical_context.config import Settings
-from physical_context.embeddings import EmbeddingProvider, UnavailableEmbeddingProvider
+from physical_context.embeddings import EmbeddingProvider
 from physical_context.image_quality import ImageQualityAnalyzer
 from physical_context.models import CaptureState
+from physical_context.providers import (
+    build_caption_provider,
+    build_embedding_provider,
+)
 from physical_context.repository import CaptureRepository
 from physical_context.runtime import initialize_storage
 from physical_context.search import CaptureSearch
-from physical_context.voyage_embedding import VoyageEmbeddingProvider
 
 
 def create_app(
@@ -31,8 +33,8 @@ def create_app(
         app.state.database = initialize_storage(active_settings)
         repository = CaptureRepository(app.state.database)
         repository.requeue_captioning()
-        active_caption_provider = caption_provider or _build_caption_provider(active_settings)
-        active_embedding_provider = embedding_provider or _build_embedding_provider(active_settings)
+        active_caption_provider = caption_provider or build_caption_provider(active_settings)
+        active_embedding_provider = embedding_provider or build_embedding_provider(active_settings)
         app.state.capture_tasks = CaptureTaskRunner(
             CaptureProcessor(repository, active_caption_provider, active_embedding_provider)
         )
@@ -66,40 +68,6 @@ def create_app(
         return {"status": "ok"}
 
     return application
-
-
-def _build_caption_provider(settings: Settings) -> CaptionProvider:
-    if settings.local_caption:
-        return UnavailableCaptionProvider("Local captioning is deferred to T-015")
-
-    api_key = settings.anthropic_api_key
-    model = settings.anthropic_model
-    if api_key is None or model is None or not model.strip():
-        return UnavailableCaptionProvider(
-            "Set PCL_ANTHROPIC_API_KEY and PCL_ANTHROPIC_MODEL to enable captioning"
-        )
-
-    return AnthropicCaptionProvider(
-        api_key=api_key.get_secret_value(),
-        model=model,
-    )
-
-
-def _build_embedding_provider(settings: Settings) -> EmbeddingProvider:
-    if settings.local_embed:
-        return UnavailableEmbeddingProvider("Local embedding is deferred to T-016")
-
-    api_key = settings.voyage_api_key
-    model = settings.voyage_model
-    if api_key is None or model is None or not model.strip():
-        return UnavailableEmbeddingProvider(
-            "Set PCL_VOYAGE_API_KEY and PCL_VOYAGE_MODEL to enable embeddings"
-        )
-
-    return VoyageEmbeddingProvider(
-        api_key=api_key.get_secret_value(),
-        model=model,
-    )
 
 
 app = create_app()
